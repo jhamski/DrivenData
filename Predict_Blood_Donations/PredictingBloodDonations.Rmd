@@ -1,0 +1,61 @@
+---
+title: "Predicting Blood Donations - drivendata.org"
+author: "James Hamski"
+date: "12/23/2016"
+output: html_document
+---
+
+```{r, message=FALSE, warning=FALSE}
+library(readr)
+library(dplyr)
+library(ggplot2)
+library(knitr)
+```
+
+## Read in necissary data
+```{r, warning=FALSE, message=FALSE}
+train <- read_csv('data/train.csv')
+test <- read_csv('data/test.csv')
+submission.format <- read_csv('data/BloodDonationSubmissionFormat.csv')
+```
+
+## Convenient renaming
+```{r}
+rename.columns <- c('donor.id', 'last.donation.months', 'donations', 'vol.donated', 'first.donation.months', 'donated')
+colnames(train) <- rename.columns
+
+colnames(test) <- rename.columns[1:5]
+```
+
+## EDA
+```{r}
+kable(cor(train))
+```
+
+```{r}
+vol.per.donation = train$vol.donated / train$donations
+summary(vol.per.donation)
+```
+Donations and volume donated are perfectly colinear. 
+
+```{r}
+train <- select (train, - vol.donated)
+```
+
+## Logistic regression proof-of-concept
+```{r}
+model.poc <- glm(donated ~. -donor.id,  family=binomial(link='logit'),data=train)
+
+summary(model.poc)
+```
+
+## Submission
+```{r}
+submission.poc <- predict.glm(model.poc, newdata = test, type = 'response')
+submission.poc <- cbind(test$donor.id, round(submission.poc, 4)) %>% as.data.frame()
+
+colnames(submission.poc) <- c("", "Made Donation in March 2007")
+write_csv(submission.poc, 'submission/jhamski1.csv')
+```
+
+The competition metric is log-loss. This scores 0.4457. 
