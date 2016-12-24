@@ -10,16 +10,17 @@ library(readr)
 library(dplyr)
 library(ggplot2)
 library(knitr)
+library(partykit)
 ```
 
 ## Read in necissary data
 ```{r, warning=FALSE, message=FALSE}
-train <- read_csv('data/train.csv')
-test <- read_csv('data/test.csv')
+train <- read_csv('data/train.csv') %>% as.data.frame()
+test <- read_csv('data/test.csv') %>% as.data.frame()
 submission.format <- read_csv('data/BloodDonationSubmissionFormat.csv')
 ```
 
-## Convenient renaming
+## Adjusting the data for analysis
 ```{r}
 rename.columns <- c('donor.id', 'last.donation.months', 'donations', 'vol.donated', 'first.donation.months', 'donated')
 colnames(train) <- rename.columns
@@ -29,6 +30,11 @@ colnames(test) <- rename.columns[1:5]
 
 ## EDA
 ```{r}
+summary(train[2:4])
+```
+
+
+```{r}
 kable(cor(train))
 ```
 
@@ -36,26 +42,136 @@ kable(cor(train))
 vol.per.donation = train$vol.donated / train$donations
 summary(vol.per.donation)
 ```
-Donations and volume donated are perfectly colinear. 
+Donations and volume donated are perfectly colinear, therefore one variable may be dropped. 
 
 ```{r}
 train <- select (train, - vol.donated)
 ```
 
-## Logistic regression proof-of-concept
+### Investigating the Variables
+```{r}
+ggplot(train, aes(last.donation.months)) + geom_density()
+ggplot(train, aes(donations)) + geom_density()
+ggplot(train, aes(first.donation.months)) + geom_density()
+ggplot(train, aes(donated)) + geom_bar()
+```
+
+
+
+## Logistic regression baseline
+
+This logistic regression with no variable transformations or other adjustments represents a baseline model that is very simple. Any other models that introduce further complexity will be judged against this model. 
 ```{r}
 model.poc <- glm(donated ~. -donor.id,  family=binomial(link='logit'),data=train)
 
 summary(model.poc)
 ```
 
-## Submission
+## Baseline model submission
 ```{r}
 submission.poc <- predict.glm(model.poc, newdata = test, type = 'response')
 submission.poc <- cbind(test$donor.id, round(submission.poc, 4)) %>% as.data.frame()
 
 colnames(submission.poc) <- c("", "Made Donation in March 2007")
-write_csv(submission.poc, 'submission/jhamski1.csv')
+write_csv(submission.poc, 'submission/jhamski_poc.csv')
 ```
 
-The competition metric is log-loss. This scores 0.4457. 
+The competition metric is log-loss. The baseline model scores 0.4457. 
+
+
+# Logistic Regression Model 1
+
+```{r}
+train$donated <- factor(train$donated)
+```
+
+
+```{r}
+model.1 <- glm(donated ~ last.donation.months^2 + sqrt(donations) + sqrt(first.donation.months), family=binomial(link='logit'), data=train)
+
+summary(model.1)
+```
+
+## Model 1 Submission
+```{r}
+submission.1 <- predict.glm(model.1, newdata = test, type = 'response')
+submission.1 <- cbind(test$donor.id, round(submission.1, 4)) %>% as.data.frame()
+
+colnames(submission.1) <- c("", "Made Donation in March 2007")
+write_csv(submission.1, 'submission/jhamski_1.csv')
+```
+
+This model scores a log-loss = 0.4506, a very minor improvement. 
+
+
+## Model 2
+
+Idea: a very frequent blood donor is likely to give blood again. However, a person cannon donate blood every month. As seen below, if someone donated blood in the last month it is very 
+
+```{r}
+ggplot(train %>% filter(donated == 1) %>% filter(last.donation.months < 8), aes(last.donation.months)) + geom_density()
+```
+
+
+The frequency of allowable donation varies, but it appears that every three months is typical. 
+
+
+
+```{r}
+train.2 <- train 
+train.2$frequency <- train.2$first.donation.months / train.2$donations
+
+train.2 <- mutate(train.2, donation.allowed = last.donation.months > 1)
+
+train.2 <- train.2 %>% select(donor.id, donated, frequency, donation.allowed, donations, last.donation.months, first.donation.months)
+```
+
+
+
+```{r}
+model.2 <- glm(donated ~ last.donation.months + frequency + donations + first.donation.months, family=binomial(link='logit'), data=train.2)
+
+summary(model.2)
+```
+
+## Model 2 Submission
+```{r}
+test.2 <- test
+test.2$frequency <- test.2$first.donation.months / test.2$donations
+
+test.2 <- mutate(test.2, donation.allowed = last.donation.months > 1)
+
+test.2 <- test.2 %>% select(donor.id, frequency, donation.allowed, donations, last.donation.months, first.donation.months)
+```
+
+
+```{r}
+submission.2 <- predict.glm(model.2, newdata = test.2, type = 'response')
+submission.2 <- cbind(test$donor.id, round(submission.2, 4)) %>% as.data.frame()
+
+colnames(submission.2) <- c("", "Made Donation in March 2007")
+write_csv(submission.2, 'submission/jhamski_2.csv')
+```
+
+
+# Conditional Tree
+
+```{r}
+model.3 <- ctree(donated ~ donations + last.donation.months + first.donation.months, data = train)
+
+plot(model.3)
+```
+
+```{r}
+submission.3 <- predict(model.3, newdata = test, type = 'prob')
+
+submission.3  <- pmax(submission.3[,1], submission.3[,2])
+
+
+submission.3 <- cbind(test$donor.id, round(submission.3, 4)) %>% as.data.frame()
+
+colnames(submission.3) <- c("", "Made Donation in March 2007")
+write_csv(submission.3, 'submission/jhamski_3.csv')
+```
+
+score = 1.5393
