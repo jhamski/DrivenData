@@ -101,7 +101,7 @@ colnames(submission.1) <- c("", "Made Donation in March 2007")
 write_csv(submission.1, 'submission/jhamski_1.csv')
 ```
 
-This model scores a log-loss = 0.4506, a very minor improvement. 
+This model scores a log-loss = 0.4506.
 
 
 ## Model 2
@@ -111,11 +111,6 @@ Idea: a very frequent blood donor is likely to give blood again. However, a pers
 ```{r}
 ggplot(train %>% filter(donated == 1) %>% filter(last.donation.months < 8), aes(last.donation.months)) + geom_density()
 ```
-
-
-The frequency of allowable donation varies, but it appears that every three months is typical. 
-
-
 
 ```{r}
 train.2 <- train 
