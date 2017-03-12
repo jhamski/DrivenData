@@ -1,0 +1,159 @@
+---
+title: "DrivenData.org - Predicting Blood Donations"
+output:
+  html_document: default
+  html_notebook: default
+---
+On Drivendata.org, a Kaggle-like site which runs modeling competitions using data from non-profits, there's a warmup competition which asks you to predict whether a person will donate blood in a given time window based on some past donation metrics [Warm Up: Predict Blood Donations](https://www.drivendata.org/competitions/2/warm-up-predict-blood-donations). It seemed like a good way to brush up on techniques for modeling binary random variables. For the blood donations task the predictor variables are:  
+- Months since last donation  
+- Number of donations  
+- Total volume donated (cc)  
+- Months since first donation  
+
+and the response variable is binary:   
+- made donation in March 2007.  
+
+Note some necissary formatting and setup code is not shown here. [See the GitHub repo for the full R script.](https://github.com/jhamski/DrivenData/tree/master/Predict_Blood_Donations)
+
+### Packages used 
+```{r, message=FALSE, warning=FALSE}
+# import and formatting
+library(readr)
+library(dplyr)
+
+# output and visualization
+library(ggplot2)
+library(knitr)
+library(grid)
+library(gridExtra)
+
+# modeling
+library(partykit)
+```
+
+## EDA
+
+```{r, warning=FALSE, message=FALSE, echo=FALSE}
+train <- read_csv('data/train.csv') %>% as.data.frame()
+test <- read_csv('data/test.csv') %>% as.data.frame()
+submission.format <- read_csv('data/BloodDonationSubmissionFormat.csv')
+
+rename.columns <- c('donor.id', 'last.donation.months', 'donations', 'vol.donated', 'first.donation.months', 'donated')
+colnames(train) <- rename.columns
+colnames(test) <- rename.columns[1:5]
+```
+
+It appears that volume donated and number of donations are perfectly colinear. This makes sense if you've ever donated blood (which you should totally do if you can!), there's a standard volume of blood drawn at each donation. Therefore volume donated was dropped from further analysis. 
+```{r, echo=FALSE}
+kable(cor(train))
+```
+
+
+```{r, echo=FALSE}
+train <- select (train, - vol.donated, -donor.id)
+```
+
+```{r, echo = FALSE}
+last.don.plot <- ggplot(train, aes(last.donation.months)) + geom_density()
+don.plot <- ggplot(train, aes(donations)) + geom_density()
+first.plot <- ggplot(train, aes(first.donation.months)) + geom_density()
+donated.plot <- ggplot(train, aes(donated)) + geom_bar()
+
+
+grid.arrange(last.don.plot, don.plot, first.plot, donated.plot, ncol = 2, nrow = 2)
+```
+
+The dataset provided by the competition doesn't seem to have any outliers or other red flags. The response variable (donated yes/no) is quite skewed towards no donations. This imbalance in the response variable is something we may need to work on down the line. 
+
+## Competition Setup
+
+The Drivendata.org Predicting Blood Donations competition gives the you a training dataset and test dataset. In order to rank your submission, you must use the test dataset to generate predictions in a CSV and upload it to their website. The competition metric is [log-loss](https://lingpipe-blog.com/2010/11/02/evaluating-with-probabilistic-truth-log-loss-vs-0-1-loss/), which steeply increases when predictions are confident (i.e. far from 0.5 and closer to 1 or 0) and the wrong classification. The lower the log-loss, the better your rank.
+
+## Logistic Regression
+
+This logistic regression with no variable transformations or other adjustments represents a baseline model. Any other models will be judged against this one. 
+
+```{r}
+model.log.reg <- glm(donated ~.,  family=binomial(link = 'logit'), data = train)
+
+summary(model.log.reg)
+```
+
+### Baseline model submission
+```{r}
+submission.log.reg <- predict.glm(model.log.reg, newdata = test, type = 'response')
+submission.log.reg <- cbind(test$donor.id, round(submission.log.reg, 4)) %>% as.data.frame()
+
+colnames(submission.log.reg) <- c("", "Made Donation in March 2007")
+write_csv(submission.log.reg, 'submission/jhamski_log_reg.csv')
+```
+
+The baseline model scores 0.4457, which currently ranks 273 out of 2095 submissions - not bad at all!  
+
+## Model 2 - 
+
+Idea: a very frequent blood donor is likely to give blood again. However, a person cannon donate blood every month. As seen below, if someone donated blood in the last month it is very unlikely they'll donate again in the response month. 
+
+```{r}
+ggplot(train %>% filter(donated == 1) %>% filter(last.donation.months < 8), aes(last.donation.months)) + geom_density()
+```
+
+```{r}
+train.2 <- train 
+train.2$frequency <- train.2$first.donation.months / train.2$donations
+
+train.2 <- mutate(train.2, donation.allowed = last.donation.months > 1)
+
+train.2 <- train.2 %>% select(donated, frequency, donation.allowed, donations, last.donation.months, first.donation.months)
+```
+
+
+
+```{r}
+model.2 <- glm(donated ~ last.donation.months + frequency + donations + first.donation.months, family=binomial(link='logit'), data=train.2)
+
+summary(model.2)
+```
+```{r}
+test.2 <- test
+test.2$frequency <- test.2$first.donation.months / test.2$donations
+
+test.2 <- mutate(test.2, donation.allowed = last.donation.months > 1)
+
+test.2 <- test.2 %>% select(donor.id, frequency, donation.allowed, donations, last.donation.months, first.donation.months)
+```
+
+
+```{r, eval = FALSE, echo=FALSE}
+submission.2 <- predict.glm(model.2, newdata = test.2, type = 'response')
+submission.2 <- cbind(test$donor.id, round(submission.2, 4)) %>% as.data.frame()
+
+colnames(submission.2) <- c("", "Made Donation in March 2007")
+write_csv(submission.2, 'submission/jhamski_2.csv')
+```
+
+## Conditional Tree
+
+A conditional tree was used via the package [partykit[PDF]](https://cran.r-project.org/web/packages/partykit/vignettes/ctree.pdf).
+```{r}
+model.3 <- ctree(donated ~ donations + last.donation.months + first.donation.months, data = train)
+
+plot(model.3)
+```
+
+
+```{r, eval = FALSE, echo=FALSE}
+submission.3 <- predict(model.3, newdata = test, type = 'prob')
+
+submission.3  <- pmax(submission.3[,1], submission.3[,2])
+
+
+submission.3 <- cbind(test$donor.id, round(submission.3, 4)) %>% as.data.frame()
+
+colnames(submission.3) <- c("", "Made Donation in March 2007")
+write_csv(submission.3, 'submission/jhamski_3.csv')
+```
+
+This scored score = 1.5393, substantially worse than the logistic regression methods.   
+It appears like the baseline logistic regression model performs the best from what I've tried so far. But since it's ranked 273, there's got to be a way to improve upon it. 
+

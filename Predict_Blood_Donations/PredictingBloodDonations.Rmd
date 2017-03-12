@@ -11,6 +11,7 @@ library(dplyr)
 library(ggplot2)
 library(knitr)
 library(partykit)
+
 ```
 
 ## Read in necissary data
@@ -148,6 +149,7 @@ colnames(submission.2) <- c("", "Made Donation in March 2007")
 write_csv(submission.2, 'submission/jhamski_2.csv')
 ```
 
+This didn't improve on the baseline and was slightly worse, scoring a log-loss of 0.4506. 
 
 # Conditional Tree
 
@@ -170,3 +172,26 @@ write_csv(submission.3, 'submission/jhamski_3.csv')
 ```
 
 score = 1.5393
+
+## Bayes Logit
+
+```{r}
+X <- model.matrix(donated ~ donations + last.donation.months + first.donation.months, data = train)
+y <- train$donated
+
+model.4 <- logit(y, X, samp=1000, burn=100)
+
+plot(model.4)
+```
+
+```{r}
+submission.4 <- predict(model.4, newdata = test, type = 'prob')
+
+submission.4  <- pmax(submission.4[,1], submission.4[,2])
+
+
+submission.4 <- cbind(test$donor.id, round(submission.4, 4)) %>% as.data.frame()
+
+colnames(submission.3) <- c("", "Made Donation in March 2007")
+write_csv(submission.3, 'submission/jhamski_3.csv')
+```
